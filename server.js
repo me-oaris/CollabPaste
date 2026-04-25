@@ -3,7 +3,6 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const { error } = require('console');
 const env = require('dotenv');
 env.config();
 
@@ -18,6 +17,7 @@ const PasteSchema = new mongoose.Schema({
   roomId: { type: String, required: true, unique: true },
   title: { type: String, default: '' },
   content: { type: String, default: '' },
+  language: { type: String, default: 'plaintext' },
   updatedAt: { type: Date, default: Date.now }
 });
 
@@ -45,36 +45,39 @@ io.on('connection', (socket) => {
     try {
       let paste = await Paste.findOne({ roomId });
       if (!paste) {
-        paste = await Paste.create({ roomId, title: '', content: '' });
+        paste = await Paste.create({ roomId, title: '', content: '', language: 'plaintext' });
       }
-      socket.emit("load", {title: paste.title, content: paste.content });
+      socket.emit("load", {title: paste.title, content: paste.content, language: paste.language });
       emitUserCount(roomId);
     } catch (error) {
       console.error("Error occurred while fetching paste:", error);
     }
   });
 
-  socket.on("edit", async ({ roomId, title, content }) => {
+  socket.on("edit", async ({ roomId, title, content, language }) => {
     try {
       const updateData = {};
       if (title !== undefined) updateData.title = title;
       if (content !== undefined) updateData.content = content;
+      if (language !== undefined) updateData.language = language;
       updateData.updatedAt = Date.now();
 
-      await Paste.findOneAndUpdate({ roomId }, updateData, { returnDocument: after, upsert: true });
-
-      socket.to(roomId).emit("update", { title, content });
+      const UpdatedPaste = await Paste.findOneAndUpdate({ roomId }, updateData, { returnDocument: 'after' }); 
+      io.to(roomId).emit("update", { title: UpdatedPaste.title, content: UpdatedPaste.content, language: UpdatedPaste.language });
     } catch (error) {
       console.error("Error occurred while updating paste:", error);
     }
   });
 
-  socket.on("disconnect", () => {
-    console.log("User disconnected");
-    if (currentRoom) {
-      emitUserCount(currentRoom);
-    }
+  socket.on("disconnecting", () => {
+    const rooms = [...socket.rooms];
+
+    rooms.forEach(roomId => {
+      if (roomId !== socket.id) {
+        emitUserCount(roomId);
+      }
   });
+});
 });
 
 server.listen(5000, () => {
